@@ -68,7 +68,7 @@ mod_unimrcp Plugin for FreeSwitch
 ######################################################################################################################
 %build
 ./bootstrap.sh
-./configure
+PKG_CONFIG_PATH=/usr/share/freeswitch/pkgconfig:/opt/unimrcp/lib64/pkgconfig ./configure
 
 ######################################################################################################################
 #
