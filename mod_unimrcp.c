@@ -2807,6 +2807,10 @@ static switch_status_t recog_channel_get_results(speech_channel_t *schannel, cha
 		if(r->result_headers && r->result_headers->headers){
 			headers = r->result_headers->headers;
 		}
+		switch_channel_set_variable(channel, "ASR-Waveform-URI", "");
+		switch_channel_set_variable(channel, "ASR-Waveform-Size", "");
+		switch_channel_set_variable(channel, "ASR-Waveform-Duration", "");
+
 		while(channel && headers){
 			if(!strcasecmp(headers->name, "ASR-Waveform-URI")) {
 				switch_channel_set_variable(channel, "ASR-Waveform-URI", headers->value);
