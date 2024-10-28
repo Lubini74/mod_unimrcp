@@ -2798,6 +2798,26 @@ static switch_status_t recog_channel_get_results(speech_channel_t *schannel, cha
 		switch_log_printf(SWITCH_CHANNEL_UUID_LOG(schannel->session_uuid), SWITCH_LOG_DEBUG, "(%s) result:\n\n%s\n", schannel->name, *result ? *result : "");
 		r->result = NULL;
 		r->start_of_input = START_OF_INPUT_REPORTED;
+		switch_core_session_t *mysession = switch_core_memory_pool_get_data(schannel->memory_pool, "__session");
+		switch_channel_t *channel = NULL;
+		if(mysession){
+			channel = switch_core_session_get_channel(mysession);
+		}
+		switch_event_header_t *headers = NULL;
+		if(r->result_headers && r->result_headers->headers){
+			headers = r->result_headers->headers;
+		}
+		while(channel && headers){
+			if(!strcasecmp(headers->name, "ASR-Waveform-URI")) {
+				switch_channel_set_variable(channel, "ASR-Waveform-URI", headers->value);
+			} else if(!strcasecmp(headers->name, "ASR-Waveform-Size")) {
+				switch_channel_set_variable(channel, "ASR-Waveform-Size", headers->value);
+			} else if(!strcasecmp(headers->name, "ASR-Waveform-Duration")) {
+				switch_channel_set_variable(channel, "ASR-Waveform-Duration", headers->value);
+			}
+			headers = headers->next;
+		}
+
 	} else if (r->start_of_input == START_OF_INPUT_RECEIVED) {
 		switch_log_printf(SWITCH_CHANNEL_UUID_LOG(schannel->session_uuid), SWITCH_LOG_DEBUG, "(%s) start of input\n", schannel->name);
 		status = SWITCH_STATUS_BREAK;
