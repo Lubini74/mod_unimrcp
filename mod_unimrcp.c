@@ -2196,6 +2196,7 @@ static switch_status_t recog_channel_start(speech_channel_t *schannel)
 	char *start_input_timers;
 	const char *mime_type;
 	char *key = NULL;
+	char *logging_tag;
 	switch_size_t len;
 	grammar_t *grammar = NULL;
 	switch_size_t grammar_uri_count = 0;
@@ -2223,6 +2224,9 @@ static switch_status_t recog_channel_start(speech_channel_t *schannel)
 	/* input timers are started by default unless the start-input-timers=false param is set */
 	start_input_timers = (char *) switch_core_hash_find(schannel->params, "start-input-timers");
 	r->timers_started = zstr(start_input_timers) || strcasecmp(start_input_timers, "false");
+
+	// -lk- Extension for uuid
+	logging_tag = (char *) switch_core_hash_find(schannel->params, "logging-tag");
 
 	/* count enabled grammars */
 	for (egk = switch_core_hash_first(r->enabled_grammars); egk; egk = switch_core_hash_next(&egk)) {
@@ -2298,6 +2302,9 @@ static switch_status_t recog_channel_start(speech_channel_t *schannel)
 	}
 	apt_string_assign(&generic_header->content_type, mime_type, mrcp_message->pool);
 	mrcp_generic_header_property_add(mrcp_message, GENERIC_HEADER_CONTENT_TYPE);
+
+	apt_string_assign(&generic_header->logging_tag, logging_tag, mrcp_message->pool);
+	mrcp_generic_header_property_add(mrcp_message, GENERIC_HEADER_LOGGING_TAG);
 
 	/* set Content-ID for inline grammars */
 	if (grammar && grammar->type != GRAMMAR_TYPE_URI) {
@@ -2857,6 +2864,8 @@ static switch_status_t recog_channel_set_params(speech_channel_t *schannel, mrcp
 			} else if (!strcasecmp(param_name, "name")) {
 				// This parameter is used internally only, not in MRCP headers
 			} else if (!strcasecmp(param_name, "start-recognize")) {
+				// This parameter is used internally only, not in MRCP headers
+			} else if (!strcasecmp(param_name, "logging-tag")) {
 				// This parameter is used internally only, not in MRCP headers
 			} else {
 				/* this is probably a vendor-specific MRCP param */
