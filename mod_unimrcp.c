@@ -2190,8 +2190,10 @@ static switch_status_t recog_channel_start(speech_channel_t *schannel)
 	switch_status_t status = SWITCH_STATUS_SUCCESS;
 	switch_hash_index_t *egk;
 	mrcp_message_t *mrcp_message;
+	mrcp_message_t *mrcp_message_prms;
 	mrcp_recog_header_t *recog_header;
 	mrcp_generic_header_t *generic_header;
+	mrcp_generic_header_t *generic_header_prms;
 	recognizer_data_t *r;
 	char *start_input_timers;
 	const char *mime_type;
@@ -2280,6 +2282,26 @@ static switch_status_t recog_channel_start(speech_channel_t *schannel)
 		grammar = NULL;
 	}
 
+	/* -lk- create MRCP message for SET-PARAMS*/
+	mrcp_message_prms = mrcp_application_message_create(schannel->unimrcp_session, schannel->unimrcp_channel, RECOGNIZER_SET_PARAMS);
+	if (mrcp_message_prms == NULL) {
+		status = SWITCH_STATUS_FALSE;
+		goto done;
+	}
+	/* allocate generic header */
+	generic_header_prms = (mrcp_generic_header_t *) mrcp_generic_header_prepare(mrcp_message_prms);
+	if (generic_header_prms == NULL) {
+		status = SWITCH_STATUS_FALSE;
+		goto done;
+	}
+	apt_string_assign(&generic_header_prms->logging_tag, logging_tag, mrcp_message_prms->pool);
+	mrcp_generic_header_property_add(mrcp_message_prms, GENERIC_HEADER_LOGGING_TAG);
+
+	if (mrcp_application_message_send(schannel->unimrcp_session, schannel->unimrcp_channel, mrcp_message_prms) == FALSE) {
+		status = SWITCH_STATUS_FALSE;
+		goto done;
+	}
+
 	/* create MRCP message */
 	mrcp_message = mrcp_application_message_create(schannel->unimrcp_session, schannel->unimrcp_channel, RECOGNIZER_RECOGNIZE);
 	if (mrcp_message == NULL) {
@@ -2302,9 +2324,6 @@ static switch_status_t recog_channel_start(speech_channel_t *schannel)
 	}
 	apt_string_assign(&generic_header->content_type, mime_type, mrcp_message->pool);
 	mrcp_generic_header_property_add(mrcp_message, GENERIC_HEADER_CONTENT_TYPE);
-
-	apt_string_assign(&generic_header->logging_tag, logging_tag, mrcp_message->pool);
-	mrcp_generic_header_property_add(mrcp_message, GENERIC_HEADER_LOGGING_TAG);
 
 	/* set Content-ID for inline grammars */
 	if (grammar && grammar->type != GRAMMAR_TYPE_URI) {
