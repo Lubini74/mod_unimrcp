@@ -2483,8 +2483,11 @@ static switch_status_t recog_channel_unload_grammar(speech_channel_t *schannel, 
 	} else {
 		recognizer_data_t *r = (recognizer_data_t *) schannel->data;
 		switch_log_printf(SWITCH_CHANNEL_UUID_LOG(schannel->session_uuid), SWITCH_LOG_DEBUG, "(%s) Unloading grammar %s\n", schannel->name, grammar_name);
+
+		switch_mutex_lock(schannel->mutex);
 		switch_core_hash_delete(r->enabled_grammars, grammar_name);
 		switch_core_hash_delete(r->grammars, grammar_name);
+		switch_mutex_unlock(schannel->mutex);
 	}
 
 	return status;
@@ -2506,6 +2509,8 @@ static switch_status_t recog_channel_enable_grammar(speech_channel_t *schannel, 
 	} else {
 		recognizer_data_t *r = (recognizer_data_t *) schannel->data;
 		grammar_t *grammar;
+
+		switch_mutex_lock(schannel->mutex);
 		grammar = (grammar_t *) switch_core_hash_find(r->grammars, grammar_name);
 		if (grammar == NULL)
 		{
@@ -2516,6 +2521,7 @@ static switch_status_t recog_channel_enable_grammar(speech_channel_t *schannel, 
 			switch_log_printf(SWITCH_CHANNEL_UUID_LOG(schannel->session_uuid), SWITCH_LOG_DEBUG, "(%s) Enabling grammar %s\n", schannel->name, grammar_name);
 			switch_core_hash_insert(r->enabled_grammars, grammar_name, grammar);
 		}
+		switch_mutex_unlock(schannel->mutex);
 	}
 
 	return status;
@@ -2537,7 +2543,10 @@ static switch_status_t recog_channel_disable_grammar(speech_channel_t *schannel,
 	} else {
 		recognizer_data_t *r = (recognizer_data_t *) schannel->data;
 		switch_log_printf(SWITCH_CHANNEL_UUID_LOG(schannel->session_uuid), SWITCH_LOG_DEBUG, "(%s) Disabling grammar %s\n", schannel->name, grammar_name);
+
+		switch_mutex_lock(schannel->mutex);
 		switch_core_hash_delete(r->enabled_grammars, grammar_name);
+		switch_mutex_unlock(schannel->mutex);
 	}
 
 	return status;
@@ -2555,8 +2564,11 @@ static switch_status_t recog_channel_disable_all_grammars(speech_channel_t *scha
 
 	recognizer_data_t *r = (recognizer_data_t *) schannel->data;
 	switch_log_printf(SWITCH_CHANNEL_UUID_LOG(schannel->session_uuid), SWITCH_LOG_DEBUG, "(%s) Disabling all grammars\n", schannel->name);
+
+	switch_mutex_lock(schannel->mutex);
 	switch_core_hash_destroy(&r->enabled_grammars);
 	switch_core_hash_init(&r->enabled_grammars);
+	switch_mutex_unlock(schannel->mutex);
 
 	return status;
 }
@@ -2568,19 +2580,25 @@ static switch_status_t recog_channel_disable_all_grammars(speech_channel_t *scha
  */
 static switch_status_t recog_channel_check_results(speech_channel_t *schannel)
 {
-	switch_status_t status = SWITCH_STATUS_SUCCESS;
+	switch_status_t status = SWITCH_STATUS_BREAK;
 	recognizer_data_t *r;
+
 	switch_mutex_lock(schannel->mutex);
+
 	r = (recognizer_data_t *) schannel->data;
 	if (!zstr(r->result)) {
 		switch_log_printf(SWITCH_CHANNEL_UUID_LOG(schannel->session_uuid), SWITCH_LOG_DEBUG, "(%s) SUCCESS, have result\n", schannel->name);
+		status = SWITCH_STATUS_SUCCESS;
 	} else if (r->start_of_input == START_OF_INPUT_RECEIVED) {
 		switch_log_printf(SWITCH_CHANNEL_UUID_LOG(schannel->session_uuid), SWITCH_LOG_DEBUG, "(%s) SUCCESS, start of input\n", schannel->name);
-	} else {
+		status = SWITCH_STATUS_SUCCESS;
+	} else if (schannel->state == SPEECH_CHANNEL_CLOSED || schannel->state == SPEECH_CHANNEL_ERROR) {
+		switch_log_printf(SWITCH_CHANNEL_UUID_LOG(schannel->session_uuid), SWITCH_LOG_WARNING, "Closing speech channel due to invalid state [%s]\n", speech_channel_state_to_string(schannel->state));
 		status = SWITCH_STATUS_FALSE;
 	}
 
 	switch_mutex_unlock(schannel->mutex);
+
 	return status;
 }
 
@@ -3459,9 +3477,9 @@ static switch_status_t recog_asr_close(switch_asr_handle_t *ah, switch_asr_flag_
 	if (schannel != NULL && !switch_test_flag(ah, SWITCH_ASR_FLAG_CLOSED)) {
 		r = (recognizer_data_t *) schannel->data;
 		speech_channel_stop(schannel);
+		switch_mutex_lock(schannel->mutex);
 		switch_core_hash_destroy(&r->grammars);
 		switch_core_hash_destroy(&r->enabled_grammars);
-		switch_mutex_lock(schannel->mutex);
 		if (r->dtmf_generator) {
 			r->dtmf_generator_active = 0;
 			mpf_dtmf_generator_destroy(r->dtmf_generator);
@@ -3651,6 +3669,15 @@ static apt_bool_t recog_message_handler(const mrcp_app_message_t *app_message)
 	return mrcp_application_message_dispatch(&globals.recog.dispatcher, app_message);
 }
 
+static apt_bool_t recog_on_terminate_event(mrcp_application_t *application, mrcp_session_t *session, mrcp_channel_t *channel)
+{
+	/* We may get this (terminate) event when the server disconnects. Terminating the session forces closing of
+	 * the speech channel so we can stop recognition in recog_channel_check_results(). */
+	mrcp_application_session_terminate(session);
+
+	return TRUE;
+}
+
 /**
  * Handle the MRCP responses/events
  */
@@ -3706,6 +3733,8 @@ static apt_bool_t recog_on_message_receive(mrcp_application_t *application, mrcp
 				} else {
 					switch_log_printf(SWITCH_CHANNEL_UUID_LOG(schannel->session_uuid), SWITCH_LOG_DEBUG, "(%s) timers failed to start, status code = %d\n", schannel->name,
 									  message->start_line.status_code);
+					/* Set ERROR state here to prevent call hang if server disconnects and can't respond to START-INPUT-TIMERS request. */
+					speech_channel_set_state(schannel, SPEECH_CHANNEL_ERROR);
 				}
 			}
 		} else if (message->start_line.method_id == RECOGNIZER_DEFINE_GRAMMAR) {
@@ -3859,6 +3888,7 @@ static switch_status_t recog_load(switch_loadable_module_interface_t *module_int
 	globals.recog.dispatcher.on_channel_add = speech_on_channel_add;
 	globals.recog.dispatcher.on_channel_remove = speech_on_channel_remove;
 	globals.recog.dispatcher.on_message_receive = recog_on_message_receive;
+	globals.recog.dispatcher.on_terminate_event = recog_on_terminate_event;
 	globals.recog.audio_stream_vtable.destroy = NULL;
 	globals.recog.audio_stream_vtable.open_rx = recog_stream_open;
 	globals.recog.audio_stream_vtable.close_rx = NULL;
@@ -4132,6 +4162,8 @@ static int process_mrcpv2_config(mrcp_sofia_client_config_t *config, mrcp_sig_se
 		config->user_agent_name = apr_pstrdup(pool, val);
 	} else if (strcasecmp(param, "sdp-origin") == 0) {
 		config->origin = apr_pstrdup(pool, val);
+	} else if (strcasecmp(param, "sip-trace") == 0) {
+		config->tport_log = switch_true(val);
 	} else {
 		mine = 0;
 	}
