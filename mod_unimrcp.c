@@ -3751,6 +3751,9 @@ static apt_bool_t recog_on_message_receive(mrcp_application_t *application, mrcp
 					speech_channel_set_state(schannel, SPEECH_CHANNEL_ERROR);
 				}
 			}
+		// -lk- Respond to SET-PARAMS			
+		} else if (message->start_line.method_id == 0) {
+			switch_log_printf(SWITCH_CHANNEL_UUID_LOG(schannel->session_uuid), SWITCH_LOG_DEBUG, "(%s) COMPLETE\n", schannel->name);
 		} else {
 			/* received unexpected response */
 			switch_log_printf(SWITCH_CHANNEL_UUID_LOG(schannel->session_uuid), SWITCH_LOG_DEBUG, "(%s) unexpected response, method_id = %d\n", schannel->name,
